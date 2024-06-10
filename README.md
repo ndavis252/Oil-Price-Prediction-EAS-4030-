@@ -48,13 +48,13 @@ python script.py
 * Predictions: After training, the model makes predictions on the latest data, which are then averaged and outputted.
 
 ### Example Output
-Epoch 20: Training loss = 0.0023, Test loss = 0.0031
-Epoch 40: Training loss = 0.0019, Test loss = 0.0028
-...
-Prediction: [[70.23]]
-Prediction: [[71.10]]
-...
-Average Prediction: [[70.67]]
+Epoch 20: Training loss = 0.0023, Test loss = 0.0031  
+Epoch 40: Training loss = 0.0019, Test loss = 0.0028  
+...  
+Prediction: [[70.23]]  
+Prediction: [[71.10]]  
+...  
+Average Prediction: [[70.67]]  
 
 ### Notes
 * Ensure you adhere to the rate limits of the Alpha Vantage API by adjusting the script's timing or using a premium key if necessary.
