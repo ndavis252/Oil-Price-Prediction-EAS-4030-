@@ -4,6 +4,7 @@
 The goal of this project is to forecast commodity prices, specifically the price of West Texas Intermediate (WTI) crude oil, using historical forex data and other economic indicators. The script collects data from Alpha Vantage, preprocesses it, and trains a neural network to make predictions.
 
 This repository contains a script, Oil Price Prediction.py, for predicting future prices of commodities based on historical forex and commodity data. The model leverages various machine learning techniques using PyTorch and data preprocessing with Pandas.
+
 Oil Predictions.docx contains predictions for three futures prices for which the project was orinally developed and discusses feature selection. The actual close price for May 2023 futures was $77.29 compared to a prediction of $76.63 (3-months in advance). 
 
 ## Key Features
