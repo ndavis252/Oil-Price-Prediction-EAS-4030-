@@ -1,19 +1,10 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Mon Jun 10 15:26:44 2024
-
-@author: NDavis
-"""
-
-import torch 
+import torch
 import torch.nn as nn
 import torch.utils.data as utils
 from torch.nn.functional import relu
 
 import pandas as pd
-
 from alpha_vantage.foreignexchange import ForeignExchange
-
 from sklearn.preprocessing import StandardScaler
 
 import numpy as np
@@ -21,239 +12,196 @@ import requests
 import time
 import math
 
+# Replace 'placeholder' with your actual API key
 key = 'placeholder'
 
-assert key != 'placeholder' "need to input API key for the file to run"
+assert key != 'placeholder', "Need to input API key for the file to run"
+
+# Timeframe configurations
+timeframe = '3_month'  # Options: '3_month', '22_month', '70_month'
+model_params = {
+    '3_month': [30, 25, 20, 15, 15, 10, 10, 5, 5],
+    '22_month': [20, 15, 10, 10, 10, 5, 5],
+    '70_month': [10, 10, 5]
+}
+
+# Forex symbols and parameters
+forex_symbols = ['AUD', 'GBP', 'EUR']
+day_deltas = [22, 65, 130, 260]  # 1-month, 3-month, 6-month, 1-year number of business days
+monthly_values = ['COPPER', 'ALUMINUM', 'ALL_COMMODITIES', 'CPI', 'DURABLES']
+month_deltas = [1, 3, 6, 12]
 
 def get_close_vals(forex_data, symbol):
     dates = forex_data.keys()
-    values = [forex_data[key]["4. close"] for key in forex_data]
-
-    # create the numpy array using np.fromiter()
-    #arr = np.fromiter(zip(dates, values), dtype=[('date', 'datetime64[D]'), (symbol, float)])
-    #arr['date'] = np.array(dates, dtype='datetime64[D]')
-    #arr['value'] = np.array(values)
-    
-    df = pd.DataFrame(dates, columns = ['date'])
-    df['value'] = values
-    
+    values = [forex_data[date]["4. close"] for date in dates]
+    df = pd.DataFrame({'date': dates, 'value': values})
     return df
 
 def get_forex_data(symbol):
     fx = ForeignExchange(key=key)
-    data, meta_data = fx.get_currency_exchange_daily(from_symbol=symbol, to_symbol='USD',outputsize='full')
-    return get_close_vals(data,symbol)
-    
-def join_on_date(arrays):
-    # create a dictionary to store the values for each date
-    date_dict = {}
-    for array in arrays:
-        for date, value in zip(array['date'], array[1]):
-            if date not in date_dict:
-                date_dict[date] = {}
-            date_dict[date][array.dtype.names[1]] = value
-    
-    # create a list of dates with values in all arrays
-    common_dates = sorted(date for date, values in date_dict.items() if len(values) == len(arrays))
-    
-    # create a numpy array with the common dates and values from each array
-    common_values = np.empty((len(common_dates), len(arrays) + 1), dtype=[('date', 'datetime64[D]')] + [(array.dtype.names[1], float) for array in arrays])
-    common_values['date'] = np.array(common_dates, dtype='datetime64[D]')
-    for i, array in enumerate(arrays):
-        for j, date in enumerate(common_dates):
-            common_values[array.dtype.names[1]][j] = date_dict[date][array.dtype.names[1]]
-    
-    return common_values
+    data, _ = fx.get_currency_exchange_daily(from_symbol=symbol, to_symbol='USD', outputsize='full')
+    return get_close_vals(data, symbol)
 
 def request_other_data(item, interval):
-    url = 'https://www.alphavantage.co/query?function=' + item + '&interval=' + interval + '&apikey=' + key
-    r = requests.get(url)
-    data = r.json()
+    url = f'https://www.alphavantage.co/query?function={item}&interval={interval}&apikey={key}'
+    response = requests.get(url)
+    data = response.json()
     return data['data']
 
 def dicts_to_df(dicts):
-    keys = dicts[0].keys()
-    arr = []
-    for i, d in enumerate(dicts):
-        in_arr = []
-        for j, k in enumerate(keys):
-            in_arr.append(d[k])
-        arr.append(in_arr)
-    return pd.DataFrame(arr, columns=keys)
+    return pd.DataFrame(dicts)
 
 def df_cast_type(df):
     df['date'] = pd.to_datetime(df['date'])
     df['value'] = pd.to_numeric(df['value'], errors='coerce')
     df.set_index('date', inplace=True)
     return df.dropna()
-    
 
-# Assumes dataframe is sorted with most recent time periods at the top
-# Use factor = 1 when it is sorted with oldest at the top
-def percent_change(data, periods, factor = -1):
-    return ((data / data.shift(periods*factor)) -1) * 100
+def percent_change(data, periods, factor=-1):
+    return ((data / data.shift(periods * factor)) - 1) * 100
 
 def month_changes(data, months):
     for m in months:
-        data[str(m) + 'period change'] = percent_change(data['value'],m)
+        data[f'{m}period_change'] = percent_change(data['value'], m)
     return data.dropna()
 
 def symbol_to_data(item, interval='monthly'):
     return df_cast_type(dicts_to_df(request_other_data(item, interval)))
 
-def add_year_month_columns(df):
+def add_date_columns(df):
     df['year'] = df.index.year
-    df['month'] = df.index.month
-    return df
-
-def add_year_month_day_columns(df):
-    df['year'] =df.index.year
     df['month'] = df.index.month
     df['day'] = df.index.day
     return df
 
-
 def create_datetime_index(df):
-    # Combine year, month, and day columns into a single string column
-    df['date_str'] = df['year'].astype(str) + '-' + df['month'].astype(str) + '-' + df['day'].astype(str)
-    
-    # Convert string column to datetime column and set it as the index
-    df['datetime'] = pd.to_datetime(df['date_str'])
+    df['datetime'] = pd.to_datetime(df[['year', 'month', 'day']])
     df.set_index('datetime', inplace=True)
-    
-    # Remove the intermediate string column
-    df.drop(columns=['date_str'], inplace=True)
-    
+    df.drop(columns=['year', 'month', 'day'], inplace=True)
     return df
 
-def merge_data(y, month_x, day_x):
-    # Merge with data only available by month
-    for x in month_x:
-        y = y.merge(x, how='left', on=['year','month'])
+def merge_data(df, monthly_dfs, daily_dfs):
+    for monthly_df in monthly_dfs:
+        df = df.merge(monthly_df, how='left', on=['year', 'month'])
     
-    # Restore Datetime index
-    y = create_datetime_index(y)
+    df = create_datetime_index(df)
     
-    # Merge with daily data
-    for df in day_x:
-        y = y.merge(df, how='left', left_index=True,right_index=True)
+    for daily_df in daily_dfs:
+        df = df.merge(daily_df, how='left', left_index=True, right_index=True)
         
-    return y.dropna()
+    return df.dropna()
 
 def split_standardize_data(df):
-    y = df.iloc[:,0].to_numpy().reshape(-1,1)
-    X = df.iloc[:,4:].to_numpy()
+    y = df.iloc[:, 0].values.reshape(-1, 1)
+    X = df.iloc[:, 1:].values
     
-    sx = StandardScaler()
-    X = sx.fit_transform(X)
-    sy = StandardScaler()
-    y = sy.fit_transform(y)
+    scaler_X = StandardScaler()
+    X = scaler_X.fit_transform(X)
     
-    train_split = int(len(y)*0.75)
+    scaler_y = StandardScaler()
+    y = scaler_y.fit_transform(y)
     
-    X_train, X_test = torch.from_numpy(X[:train_split,:]).float(), torch.from_numpy(X[train_split:,:]).float()
-    y_train, y_test = torch.from_numpy(y[:train_split,:]).float(), torch.from_numpy(y[train_split:,:]).float()
-    return X_train, X_test, y_train, y_test, sx, sy
+    train_split = int(len(y) * 0.75)
+    
+    X_train = torch.FloatTensor(X[:train_split])
+    X_test = torch.FloatTensor(X[train_split:])
+    y_train = torch.FloatTensor(y[:train_split])
+    y_test = torch.FloatTensor(y[train_split:])
+    
+    return X_train, X_test, y_train, y_test, scaler_X, scaler_y
 
 class OilModel(nn.Module):
-    def __init__(self, xfeat, yfeat, p=[60,60,60]):
+    def __init__(self, x_feat, y_feat, layers):
         super().__init__()
-        self.l1 = nn.Parameter(torch.rand(xfeat, p[0]))
-        self.layer_list = []
-        for i, dim in enumerate(p[:-1]):
-            setattr(self, f'layer_{i+1}', nn.Parameter(torch.rand(dim, p[i+1])-0.5))
-            self.layer_list.append(getattr(self, f'layer_{i+1}'))
-        self.out = nn.Parameter(torch.rand(p[-1], yfeat)-0.5)
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Linear(x_feat, layers[0]))
+        for i in range(len(layers) - 1):
+            self.layers.append(nn.Linear(layers[i], layers[i + 1]))
+        self.layers.append(nn.Linear(layers[-1], y_feat))
         self.dropout = nn.Dropout(p=0.2)
         
     def forward(self, x):
-        x = torch.relu(x@self.l1)
-        x = self.dropout(x)
-        for layer in self.layer_list:
-            x = relu(x@layer + 0.01)
+        for layer in self.layers[:-1]:
+            x = relu(layer(x))
             x = self.dropout(x)
-        x = x@self.out
+        x = self.layers[-1](x)
         return x
-  
-forex_symbols = ['AUD','GBP','EUR']
-day_deltas = [22, 65, 130, 260] #1-month, 3-month, 6-month, 1-year number of business days
-forex_arrays = [df_cast_type(get_forex_data(s)) for s in forex_symbols]
-forex_changes = [month_changes(df, day_deltas) for df in forex_arrays]
 
-GAS_df = symbol_to_data('NATURAL_GAS', interval='daily')
-GAS_change = month_changes(GAS_df, day_deltas)
+# Fetching forex data
+forex_dfs = [get_forex_data(symbol) for symbol in forex_symbols]
+forex_changes = [month_changes(df, day_deltas) for df in forex_dfs]
 
-WTI_df = symbol_to_data('WTI', interval='daily')
-forex_changes.append(GAS_change)
-forex_changes.append(WTI_df)
+# Fetching natural gas and WTI data
+gas_df = symbol_to_data('NATURAL_GAS', interval='daily')
+gas_change = month_changes(gas_df, day_deltas)
+forex_changes.append(gas_change)
+
+wti_df = symbol_to_data('WTI', interval='daily')
+forex_changes.append(wti_df)
 
 time.sleep(60) #have to wait because of restrictions on API calls
 
-monthly_values = ['COPPER','ALUMINUM','ALL_COMMODITIES','CPI','DURABLES']
-df_list = [symbol_to_data(m) for m in monthly_values]
-month_deltas = [1, 3, 6, 12]
-indicators_changes = [add_year_month_columns(month_changes(df, month_deltas)) for df in df_list]
+# Fetching monthly data
+monthly_dfs = [symbol_to_data(symbol, interval='monthly') for symbol in monthly_values]
+indicators_changes = [add_date_columns(month_changes(df, month_deltas)) for df in monthly_dfs]
 
-# what we are trying to forecast (number of business days in advance)
-WTI_df_3month_from_date_spot_price = add_year_month_day_columns(WTI_df.shift(periods=65))
-WTI_df_22month_from_date_spot_price = add_year_month_day_columns(WTI_df.shift(periods=479))
-WTI_df_70month_from_date_spot_price = add_year_month_day_columns(WTI_df.shift(periods=1521))
+# Preparing target data based on the timeframe
+if timeframe == '3_month':
+    wti_target = add_date_columns(wti_df.shift(periods=65))
+elif timeframe == '22_month':
+    wti_target = add_date_columns(wti_df.shift(periods=479))
+elif timeframe == '70_month':
+    wti_target = add_date_columns(wti_df.shift(periods=1521))
 
-#WTI_df_22month_from_date_spot_price_dropped = merge_data(WTI_df_22month_from_date_spot_price, indicators_changes, forex_changes)
-#WTI_df_70month_from_date_spot_price_dropped = merge_data(WTI_df_70month_from_date_spot_price, indicators_changes, forex_changes)
-WTI_df_3month_from_date_spot_price_dropped = merge_data(WTI_df_3month_from_date_spot_price, indicators_changes, forex_changes)
+wti_target_dropped = merge_data(wti_target, indicators_changes, forex_changes)
 
-X_train, X_test, y_train, y_test, sx, sy = split_standardize_data(WTI_df_3month_from_date_spot_price_dropped)
+# Splitting and standardizing data
+X_train, X_test, y_train, y_test, scaler_X, scaler_y = split_standardize_data(wti_target_dropped)
 
-# Training Parameters
+# Training parameters
 lr = 0.1
 batch_size = 200
-shuffle=True
+shuffle = True
 num_epochs = 200
-loss = nn.MSELoss()
+loss_fn = nn.MSELoss()
+num_models = 12
 
 # Create the model
-xfeat = X_train.size(dim=1)
-yfeat = y_train.size(dim=1)
+x_feat = X_train.size(1)
+y_feat = y_train.size(1)
+model_layers = model_params[timeframe]
 
 predictions = []
-for p in range(12):
-    model = OilModel(xfeat, yfeat, p=[30,25,20,15,15,10,10,5,5]) #good parameters for 3 month
-    #model = OilModel(xfeat, yfeat, p=[20,15,10,10,10,5,5]) #22 month
-    #model = OilModel(xfeat, yfeat, p=[10,10,5]) #70 month
-    opt = torch.optim.SGD(model.parameters(), lr=lr)
-    #opt = torch.optim.Adam(model.parameters(), lr=lr)
+for _ in range(num_models):
+    model = OilModel(x_feat, y_feat, layers=model_layers)
+    optimizer = torch.optim.SGD(model.parameters(), lr=lr)
     
     train_dataset = utils.TensorDataset(X_train, y_train)
-    train_loader = utils.DataLoader(train_dataset, batch_size, shuffle)
-    num_batches = math.ceil(X_train.size(dim=0)/batch_size)
+    train_loader = utils.DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle)
     
-    # Training loop
-    loss_list = []
-    test_loss_list = []
-    for i in range(num_epochs):
+    for epoch in range(num_epochs):
+        model.train()
         for xb, yb in train_loader:
-            model.zero_grad()
-            
-            ypred = model.forward(xb)
-            r = loss(yb, ypred)
-            r.backward()
-            opt.step()
-            
-        epoch_mse = loss(y_train, model.forward(X_train))
-        loss_list.append(epoch_mse.detach())
-        test_loss = loss(y_test, model.forward(X_test))
-        test_loss_list.append(test_loss.detach().numpy())
-        if (i+1) % 20 == 0:
-            print(f'Epoch {i}: training loss = {epoch_mse.detach()}, test loss = {test_loss}')
+            optimizer.zero_grad()
+            y_pred = model(xb)
+            loss = loss_fn(yb, y_pred)
+            loss.backward()
+            optimizer.step()
     
+    # Making prediction
+    model.eval()
     today_vals = []
-    [today_vals.append(df.iloc[0,:5]) for df in indicators_changes]
-    [today_vals.append(df.iloc[0,:]) for df in forex_changes]
-    today_vals = [val for sublist in today_vals for val in sublist]
-    today_vals = sx.transform(np.array(today_vals).reshape(1,-1))
+    for df in indicators_changes + forex_changes:
+        today_vals.append(df.iloc[0, 1:])
     
-    prediction = model.forward(torch.FloatTensor(today_vals))
-    prediction = sy.inverse_transform(prediction.detach().reshape(-1,1))
+    today_vals = np.concatenate(today_vals).reshape(1, -1)
+    today_vals = scaler_X.transform(today_vals)
+    
+    prediction = model(torch.FloatTensor(today_vals))
+    prediction = scaler_y.inverse_transform(prediction.detach().numpy().reshape(-1, 1))
     predictions.append(prediction)
     print('Prediction:', prediction)
+
+# Average predictions
+average_prediction = np.mean(predictions, axis=0)
+print('Average Prediction:', average_prediction)
